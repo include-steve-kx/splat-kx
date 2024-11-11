@@ -1,321 +1,78 @@
-let camera = {
-    id: 0,
-    img_name: "00001",
-    width: 1959,
-    height: 1090,
-    position: [
-        -3.0089893469241797, -0.11086489695181866, -3.7527640949141428,
-    ],
-    rotation: [
-        [0.876134201218856, 0.06925962026449776, 0.47706599800804744],
-        [-0.04747421839895102, 0.9972110940209488, -0.057586739349882114],
-        [-0.4797239414934443, 0.027805376500959853, 0.8769787916452908],
-    ],
-    fy: 1164.6601287484507,
-    fx: 1159.5880733038064,
-};
+import * as THREE from 'three';
+import { OrbitControls } from "three/addons";
+import { startSplatViewer, updateCameraMatrix } from "./src/Splatting.js";
+import {update} from "three/addons/libs/tween.module";
 
-let defaultViewMatrix = [
-    0.47, 0.04, 0.88, 0, -0.11, 0.99, 0.02, 0, -0.88, -0.11, 0.47, 0, 0.07,
-    0.03, 6.55, 1,
-];
-let viewMatrix = defaultViewMatrix;
-async function main() {
-    const params = new URLSearchParams(location.search);
-    const url = new URL(
-        // "nike.splat",
-        // location.href,
-        params.get("url") || "train.splat",
-        "https://huggingface.co/cakewalk/splat-data/resolve/main/",
-    );
-    const req = await fetch(url, {
-        mode: "cors", // no-cors, *cors, same-origin
-        credentials: "omit", // include, *same-origin, omit
-    });
-    console.log(req);
-    if (req.status != 200)
-        throw new Error(req.status + " Unable to load " + req.url);
+let camera, scene, renderer;
+let geometry, material, mesh;
+let controls;
 
-    const rowLength = 3 * 4 + 3 * 4 + 4 + 4;
-    const reader = req.body.getReader();
-    let splatData = new Uint8Array(req.headers.get("content-length"));
+function setupEventListeners() {
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
 
-    const downsample =
-        splatData.length / rowLength > 500000 ? 1 : 1 / devicePixelRatio;
-    console.log(splatData.length / rowLength, downsample);
-
-    const worker = new Worker(
-        URL.createObjectURL(
-            new Blob(["(", createWorker.toString(), ")(self)"], {
-                type: "application/javascript",
-            }),
-        ),
-    );
-
-    const canvas = document.getElementById("canvas");
-    const fps = document.getElementById("fps");
-    const camid = document.getElementById("camid");
-
-    let projectionMatrix;
-
-    const gl = canvas.getContext("webgl2", {
-        antialias: false,
-    });
-
-    const vertexShader = gl.createShader(gl.VERTEX_SHADER);
-    gl.shaderSource(vertexShader, vertexShaderSource);
-    gl.compileShader(vertexShader);
-    if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS))
-        console.error(gl.getShaderInfoLog(vertexShader));
-
-    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-    gl.shaderSource(fragmentShader, fragmentShaderSource);
-    gl.compileShader(fragmentShader);
-    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS))
-        console.error(gl.getShaderInfoLog(fragmentShader));
-
-    const program = gl.createProgram();
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-    gl.useProgram(program);
-
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS))
-        console.error(gl.getProgramInfoLog(program));
-
-    gl.disable(gl.DEPTH_TEST); // Disable depth testing
-
-    // Enable blending
-    gl.enable(gl.BLEND);
-    gl.blendFuncSeparate(
-        gl.ONE_MINUS_DST_ALPHA,
-        gl.ONE,
-        gl.ONE_MINUS_DST_ALPHA,
-        gl.ONE,
-    );
-    gl.blendEquationSeparate(gl.FUNC_ADD, gl.FUNC_ADD);
-
-    const u_projection = gl.getUniformLocation(program, "projection");
-    const u_viewport = gl.getUniformLocation(program, "viewport");
-    const u_focal = gl.getUniformLocation(program, "focal");
-    const u_view = gl.getUniformLocation(program, "view");
-
-    // positions
-    const triangleVertices = new Float32Array([-2, -2, 2, -2, 2, 2, -2, 2]);
-    const vertexBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, triangleVertices, gl.STATIC_DRAW);
-    const a_position = gl.getAttribLocation(program, "position");
-    gl.enableVertexAttribArray(a_position);
-    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-    gl.vertexAttribPointer(a_position, 2, gl.FLOAT, false, 0, 0);
-
-    var texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-
-    var u_textureLocation = gl.getUniformLocation(program, "u_texture");
-    gl.uniform1i(u_textureLocation, 0);
-
-    const indexBuffer = gl.createBuffer();
-    const a_index = gl.getAttribLocation(program, "index");
-    gl.enableVertexAttribArray(a_index);
-    gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
-    gl.vertexAttribIPointer(a_index, 1, gl.INT, false, 0, 0);
-    gl.vertexAttribDivisor(a_index, 1);
-
-    const resize = () => {
-        gl.uniform2fv(u_focal, new Float32Array([camera.fx, camera.fy]));
-
-        projectionMatrix = getProjectionMatrix(
-            camera.fx,
-            camera.fy,
-            innerWidth,
-            innerHeight,
-        );
-
-        gl.uniform2fv(u_viewport, new Float32Array([innerWidth, innerHeight]));
-
-        gl.canvas.width = Math.round(innerWidth / downsample);
-        gl.canvas.height = Math.round(innerHeight / downsample);
-        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-
-        gl.uniformMatrix4fv(u_projection, false, projectionMatrix);
-    };
-
-    window.addEventListener("resize", resize);
-    resize();
-
-    worker.onmessage = (e) => {
-        if (e.data.buffer) {
-            splatData = new Uint8Array(e.data.buffer);
-            const blob = new Blob([splatData.buffer], {
-                type: "application/octet-stream",
-            });
-            const link = document.createElement("a");
-            link.download = "model.splat";
-            link.href = URL.createObjectURL(blob);
-            document.body.appendChild(link);
-            link.click();
-        } else if (e.data.texdata) {
-            const { texdata, texwidth, texheight } = e.data;
-            // console.log(texdata)
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.texParameteri(
-                gl.TEXTURE_2D,
-                gl.TEXTURE_WRAP_S,
-                gl.CLAMP_TO_EDGE,
-            );
-            gl.texParameteri(
-                gl.TEXTURE_2D,
-                gl.TEXTURE_WRAP_T,
-                gl.CLAMP_TO_EDGE,
-            );
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-
-            gl.texImage2D(
-                gl.TEXTURE_2D,
-                0,
-                gl.RGBA32UI,
-                texwidth,
-                texheight,
-                0,
-                gl.RGBA_INTEGER,
-                gl.UNSIGNED_INT,
-                texdata,
-            );
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-        } else if (e.data.depthIndex) {
-            const { depthIndex, viewProj } = e.data;
-            gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, depthIndex, gl.DYNAMIC_DRAW);
-            vertexCount = e.data.vertexCount;
-        }
-    };
-
-    let vertexCount = 0;
-
-    let lastFrame = 0;
-    let avgFps = 0;
-    let start = 0;
-
-    const frame = (now) => {
-
-        let actualViewMatrix = viewMatrix;
-
-        const viewProj = multiply4(projectionMatrix, actualViewMatrix);
-        worker.postMessage({ view: viewProj });
-
-        const currentFps = 1000 / (now - lastFrame) || 0;
-        avgFps = avgFps * 0.9 + currentFps * 0.1;
-
-        if (vertexCount > 0) {
-            document.getElementById("spinner").style.display = "none";
-            gl.uniformMatrix4fv(u_view, false, actualViewMatrix);
-            gl.clear(gl.COLOR_BUFFER_BIT);
-            gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, vertexCount);
-        } else {
-            gl.clear(gl.COLOR_BUFFER_BIT);
-            document.getElementById("spinner").style.display = "";
-            start = Date.now() + 2000;
-        }
-        const progress = (100 * vertexCount) / (splatData.length / rowLength);
-        if (progress < 100) {
-            document.getElementById("progress").style.width = progress + "%";
-        } else {
-            document.getElementById("progress").style.display = "none";
-        }
-        fps.innerText = Math.round(avgFps) + " fps";
-        lastFrame = now;
-        requestAnimationFrame(frame);
-    };
-
-    frame();
-
-    const selectFile = (file) => {
-        const fr = new FileReader();
-        if (/\.json$/i.test(file.name)) {
-            fr.onload = () => {
-                cameras = JSON.parse(fr.result);
-                viewMatrix = getViewMatrix(cameras[0]);
-                projectionMatrix = getProjectionMatrix(
-                    camera.fx / downsample,
-                    camera.fy / downsample,
-                    canvas.width,
-                    canvas.height,
-                );
-                gl.uniformMatrix4fv(u_projection, false, projectionMatrix);
-
-                console.log("Loaded Cameras");
-            };
-            fr.readAsText(file);
-        } else {
-            stopLoading = true;
-            fr.onload = () => {
-                splatData = new Uint8Array(fr.result);
-                console.log("Loaded", Math.floor(splatData.length / rowLength));
-
-                if (
-                    splatData[0] == 112 &&
-                    splatData[1] == 108 &&
-                    splatData[2] == 121 &&
-                    splatData[3] == 10
-                ) {
-                    // ply file magic header means it should be handled differently
-                    worker.postMessage({ ply: splatData.buffer });
-                } else {
-                    worker.postMessage({
-                        buffer: splatData.buffer,
-                        vertexCount: Math.floor(splatData.length / rowLength),
-                    });
-                }
-            };
-            fr.readAsArrayBuffer(file);
-        }
-    };
-
-    const preventDefault = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-    };
-    document.addEventListener("dragenter", preventDefault);
-    document.addEventListener("dragover", preventDefault);
-    document.addEventListener("dragleave", preventDefault);
-    document.addEventListener("drop", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        selectFile(e.dataTransfer.files[0]);
-    });
-
-    let bytesRead = 0;
-    let lastVertexCount = -1;
-    let stopLoading = false;
-
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done || stopLoading) break;
-
-        splatData.set(value, bytesRead);
-        bytesRead += value.length;
-
-        if (vertexCount > lastVertexCount) {
-            worker.postMessage({
-                buffer: splatData.buffer,
-                vertexCount: Math.floor(bytesRead / rowLength),
-            });
-            lastVertexCount = vertexCount;
-        }
-    }
-    if (!stopLoading)
-        worker.postMessage({
-            buffer: splatData.buffer,
-            vertexCount: Math.floor(bytesRead / rowLength),
-        });
+        renderer.setSize( window.innerWidth, window.innerHeight );
+    })
 }
 
-main().catch((err) => {
-    document.getElementById("spinner").style.display = "none";
-    // document.getElementById("message").innerText = err.toString();
-    console.log(err);
-});
+function init() {
+    // renderer
+    renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: true,
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    let canvas_parent_div = document.querySelector('#canvas-container');
+    canvas_parent_div.style.position = 'absolute';
+    canvas_parent_div.style.zIndex = '2';
+    canvas_parent_div.appendChild(renderer.domElement);
+
+    // scene
+    scene = new THREE.Scene();
+
+    // camera
+    camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
+    camera.position.set(2, 2, 2);
+    camera.lookAt(10, 0, 0);
+
+    // lighting
+    const light = new THREE.AmbientLight(0x404040, 10);
+    scene.add(light);
+    const light2 = new THREE.PointLight(0x404040, 1000, 100);
+    light2.position.set(1, 2.5, 5);
+    scene.add(light2);
+
+    // mesh
+    geometry = new THREE.BoxGeometry(1, 1, 1);
+    material = new THREE.MeshStandardMaterial({color: 0x0000ff});
+    mesh = new THREE.Mesh(geometry, material);
+    // scene.add(mesh);
+
+    // start splat viewer
+    startSplatViewer().catch((err) => {
+        document.getElementById("spinner").style.display = "none";
+        // document.getElementById("message").innerText = err.toString();
+        console.log(err);
+    });
+
+    // orbit control
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableZoom = true;
+
+    setupEventListeners();
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    camera.updateMatrixWorld(true);
+    let m = camera.matrixWorld.clone().elements;
+    updateCameraMatrix(m);
+
+    renderer.render(scene, camera);
+
+}
+
+init();
+animate();
