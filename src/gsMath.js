@@ -190,11 +190,17 @@ export function multiply3v(m, v) {
 }
 
 export function correctRotation(v) {
-    let a = 3.14159;
+    let ay = -3.14159 / 5.;
+    let ax = 3.14159;
+    let ry = [
+        Math.cos(ay), 0., -Math.sin(ay),
+        0., 1., 0.,
+        Math.sin(ay), 0., Math.cos(ay)
+    ];
     let rx = [
         1., 0., 0.,
-        0., Math.cos(a), -Math.sin(a),
-        0., Math.sin(a), Math.cos(a)
+        0., Math.cos(ax), -Math.sin(ax),
+        0., Math.sin(ax), Math.cos(ax)
     ];
-    return multiply3v(rx, v);
+    return multiply3v(ry, multiply3v(rx, v));
 }

@@ -34,6 +34,15 @@ export function updateCameraMatrix(m) {
     cameraMatrix = m;
 }
 
+let gl = null;
+let program = null;
+export function getContext() {
+    return {
+        gl,
+        program
+    };
+}
+
 export async function startSplatViewer() {
     const params = new URLSearchParams(location.search);
     // const url = new URL(
@@ -69,7 +78,7 @@ export async function startSplatViewer() {
 
     let projectionMatrix;
 
-    const gl = canvas.getContext("webgl2", {
+    gl = canvas.getContext("webgl2", {
         antialias: false,
     });
 
@@ -85,7 +94,7 @@ export async function startSplatViewer() {
     if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS))
         console.error(gl.getShaderInfoLog(fragmentShader));
 
-    const program = gl.createProgram();
+    program = gl.createProgram();
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
@@ -110,6 +119,11 @@ export async function startSplatViewer() {
     const u_viewport = gl.getUniformLocation(program, "viewport");
     const u_focal = gl.getUniformLocation(program, "focal");
     const u_view = gl.getUniformLocation(program, "view");
+    const u_mouse = gl.getUniformLocation(program, "uMouse");
+    const u_time = gl.getUniformLocation(program, "uTime");
+
+    // hard set uAnimateTime to 0.
+    gl.uniform1f(gl.getUniformLocation(program, "uAnimateTime"), 0.);
 
     // positions
     const triangleVertices = new Float32Array([-2, -2, 2, -2, 2, 2, -2, 2]);
@@ -211,13 +225,29 @@ export async function startSplatViewer() {
         }
     };
 
+    let uMouse = [0, 0];
+    let uMouseScreen = [0, 0];
+    window.addEventListener("pointermove", (e) => {
+        // uMouseScreen = [e.clientX, e.clientY];
+        // uMouse = [(e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1];
+        uMouseScreen = [Math.round(e.clientX), Math.round(e.clientY)];
+        uMouse = [(uMouseScreen[0] / innerWidth) * 2 - 1, -(uMouseScreen[1] / innerHeight) * 2 + 1];
+        // console.log(uMouse)
+    })
+
     let vertexCount = 0;
 
     let lastFrame = 0;
     let avgFps = 0;
     let start = 0;
+    let startTime = null;
 
     const frame = (now) => {
+
+        if (startTime === null && now !== undefined) {
+            startTime = now;
+        }
+        let uTime = (now - startTime) / 1000;
 
         const flipMatrix =
             [1, 0, 0, 0,
@@ -234,6 +264,9 @@ export async function startSplatViewer() {
         const currentFps = 1000 / (now - lastFrame) || 0;
         avgFps = avgFps * 0.9 + currentFps * 0.1;
 
+        gl.uniform2fv(u_mouse, new Float32Array(uMouse));
+        gl.uniform1f(u_time, uTime);
+
         if (vertexCount > 0) {
             document.getElementById("spinner").style.display = "none";
             gl.uniformMatrix4fv(u_view, false, actualViewMatrix);
@@ -245,12 +278,7 @@ export async function startSplatViewer() {
             start = Date.now() + 2000;
         }
         const progress = (100 * vertexCount) / (splatData.length / rowLength);
-        if (progress < 100) {
-            document.getElementById("progress").style.width = progress + "%";
-        } else {
-            document.getElementById("progress").style.display = "none";
-        }
-        fps.innerText = Math.round(avgFps) + " fps";
+        // fps.innerText = Math.round(avgFps) + " fps";
         lastFrame = now;
         requestAnimationFrame(frame);
     };
@@ -309,7 +337,7 @@ export async function startSplatViewer() {
     document.addEventListener("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        selectFile(e.dataTransfer.files[0]);
+        // selectFile(e.dataTransfer.files[0]);
     });
 
     let bytesRead = 0;
