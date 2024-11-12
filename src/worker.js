@@ -137,7 +137,7 @@ function runSort(viewProj) {
         lastVertexCount = vertexCount;
     }
 
-    console.time("sort");
+    // console.time("sort");
     let maxDepth = -Infinity;
     let minDepth = Infinity;
     let sizeList = new Int32Array(vertexCount);
@@ -169,7 +169,7 @@ function runSort(viewProj) {
     for (let i = 0; i < vertexCount; i++)
         depthIndex[starts0[sizeList[i]]++] = i;
 
-    console.timeEnd("sort");
+    // console.timeEnd("sort");
 
     lastProj = viewProj;
     self.postMessage({ depthIndex, viewProj, vertexCount }, [
